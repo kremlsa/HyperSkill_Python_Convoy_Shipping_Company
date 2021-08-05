@@ -8,11 +8,14 @@ from xml.etree.ElementTree import Element,tostring
 
 
 def scoring_func(tank_, consumption_, load_):
-    first_ = 0 if 450 * consumption_ / 100 <= 230 else 1
-    num_of_stops_ = math.floor(tank_ / (450 * consumption_ / 100))
-    second_ = 0 if num_of_stops_ == 0 else 1 if num_of_stops_ == 1 else 2
-    third_ = 0 if load_ < 20 else 2
-    return first_ + second_ + third_
+    result = []
+    for t_, c_, l_ in zip(tank_, consumption_, load_):
+        first_ = 2 if 450 * c_ / 100 <= 230 else 1
+        num_of_stops_ = math.floor((450 * c_ / 100) / t_)
+        second_ = 2 if num_of_stops_ == 0 else 1 if num_of_stops_ == 1 else 0
+        third_ = 0 if l_ < 20 else 2
+        result.append(first_ + second_ + third_)
+    return result
 
 
 def load_from_db(conn_):
@@ -22,7 +25,7 @@ def load_from_db(conn_):
 
 
 def save_to_db(df_, conn_):
-    df_.a
+    df_['score'] = scoring_func(df_.engine_capacity.tolist(), df_.fuel_consumption.tolist(), df_.maximum_load.tolist())
     df_.to_sql("convoy", conn_, if_exists="append", index=False)
     conn_.commit()
     ending = " was" if len(df_updated) == 1 else "s were"
@@ -30,6 +33,7 @@ def save_to_db(df_, conn_):
 
 
 def save_to_json(df_):
+    df_ = df_.drop(columns=['score'])
     json_dict_ = {"convoy": df_.to_dict('records')}
     with open(f"{file_name}.json", 'w', encoding='utf-8') as file_:
         json.dump(json_dict_, file_, indent=4)
@@ -60,6 +64,7 @@ def save_corrected_data(df_, df_updated_):
 
 
 def save_to_xml(df_):
+    df_ = df_.drop(columns=['score'])
     with open(f"{file_name}.xml", 'w', encoding='utf-8') as file_:
         file_.write(dict_to_xml('convoy', df_.to_dict('records')))
     ending_ = " was" if len(df_) == 1 else "s were"
@@ -78,7 +83,7 @@ def dict_to_xml(tag, d):
             child_elem.text = str(val)
             child.append(child_elem)
         elem.append(child)
-    return ElementTree.tostring(elem, encoding='unicode', method='xml')
+    return ElementTree.tostring(elem, encoding='unicode', method='xml', short_empty_elements=False)
 
 
 print("Input file name")
@@ -90,14 +95,15 @@ create_table_query = """CREATE TABLE IF NOT EXISTS convoy (
                             vehicle_id INTEGER PRIMARY KEY,
                             engine_capacity INTEGER NOT NULL,
                             fuel_consumption INTEGER NOT NULL,
-                            maximum_load INTEGER NOT NULL);"""
+                            maximum_load INTEGER NOT NULL,
+                            score INTEGER NOT NULL);"""
 cursor.execute(create_table_query)
 connection.commit()
 
 if file_ext == "s3db":
     df = load_from_db(connection)
-    save_to_json(df)
-    save_to_xml(df)
+    save_to_json(df[(df.score > 3)])
+    save_to_xml(df[(df.score <= 3)])
 elif file_ext == "xlsx":
     df = load_from_xlsx()
     save_to_csv(df)
@@ -105,8 +111,9 @@ elif file_ext == "xlsx":
     save_corrected_data(df, df_updated)
     df_updated = df_updated.astype('int32')
     save_to_db(df_updated, connection)
-    save_to_json(df_updated)
-    save_to_xml(df_updated)
+    df = load_from_db(connection)
+    save_to_json(df[(df.score > 3)])
+    save_to_xml(df[(df.score <= 3)])
 elif file_ext == "csv":
     df = load_from_csv()
     df_updated = df.replace(to_replace='\D', value='', regex=True)
@@ -115,7 +122,8 @@ elif file_ext == "csv":
     file_name = file_name.replace("[CHECKED]", "")
     df_updated = df_updated.astype('int32')
     save_to_db(df_updated, connection)
-    save_to_json(df_updated)
-    save_to_xml(df_updated)
+    df = load_from_db(connection)
+    save_to_json(df[(df.score > 3)])
+    save_to_xml(df[(df.score <= 3)])
 cursor.close()
 connection.close()
